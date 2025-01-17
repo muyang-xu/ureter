@@ -1,0 +1,941 @@
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("limma")
+
+
+library(limma)               
+expFile="geneMatrix.txt"     
+conFile="s1.txt"           
+treatFile="s2.txt"           
+setwd("C:\\biowolf\\geoFRG\\05.normalize")      
+
+
+rt=read.table(expFile, header=T, sep="\t", check.names=F)
+rt=as.matrix(rt)
+rownames(rt)=rt[,1]
+exp=rt[,2:ncol(rt)]
+dimnames=list(rownames(exp),colnames(exp))
+data=matrix(as.numeric(as.matrix(exp)),nrow=nrow(exp),dimnames=dimnames)
+data=avereps(data)
+
+
+s1=read.table(conFile, header=F, sep="\t", check.names=F)
+sampleName1=as.vector(s1[,1])
+conData=data[,sampleName1]
+
+
+s2=read.table(treatFile, header=F, sep="\t", check.names=F)
+sampleName2=as.vector(s2[,1])
+treatData=data[,sampleName2]
+
+
+rt=cbind(conData, treatData)
+
+
+qx=as.numeric(quantile(rt, c(0, 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC=( (qx[5]>100) || ( (qx[6]-qx[1])>50 && qx[2]>0) )
+if(LogC){
+	rt[rt<0]=0
+	rt=log2(rt+1)}
+data=normalizeBetweenArrays(rt)
+
+
+conNum=ncol(conData)
+treatNum=ncol(treatData)
+Type=c(rep("Control",conNum),rep("Treat",treatNum))
+outData=rbind(id=paste0(colnames(data),"_",Type),data)
+write.table(outData, file="normalize.txt", sep="\t", quote=F, col.names=F)
+
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("limma")
+
+
+library(limma)      
+expFile="normalize.txt"     
+geneFile="gene.txt"         
+setwd("C:\\biowolf\\geoFRG\\06.FRGexp")     
+
+
+rt=read.table(expFile, header=T, sep="\t", check.names=F)
+rt=as.matrix(rt)
+rownames(rt)=rt[,1]
+exp=rt[,2:ncol(rt)]
+dimnames=list(rownames(exp), colnames(exp))
+data=matrix(as.numeric(as.matrix(exp)), nrow=nrow(exp), dimnames=dimnames)
+data=avereps(data)
+
+
+gene=read.table(geneFile, header=F, sep="\t", check.names=F)
+sameGene=intersect(as.vector(gene[,1]), rownames(data))
+geneExp=data[sameGene,]
+
+out=rbind(ID=colnames(geneExp), geneExp)
+write.table(out, file="FRGexp.txt", sep="\t", quote=F, col.names=F)
+
+
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("limma")
+
+install.packages("pheatmap")
+
+
+
+library(limma)
+library(pheatmap)
+
+expFile="FRGexp.txt"      
+setwd("C:\\biowolf\\geoFRG\\07.diff")      
+
+
+rt=read.table(expFile, header=T, sep="\t", check.names=F)
+rt=as.matrix(rt)
+rownames(rt)=rt[,1]
+exp=rt[,2:ncol(rt)]
+dimnames=list(rownames(exp),colnames(exp))
+data=matrix(as.numeric(as.matrix(exp)),nrow=nrow(exp),dimnames=dimnames)
+data=avereps(data)
+data=data[rowMeans(data)>0,]
+
+
+Type=gsub("(.*)\\_(.*)", "\\2", colnames(data))
+conNum=length(Type[Type=="Control"])
+treatNum=length(Type[Type=="Treat"])
+
+
+sigVec=c()
+sigGeneVec=c()
+diffTab=data.frame()
+for(i in row.names(data)){
+	test=wilcox.test(data[i,] ~ Type)
+	pvalue=test$p.value
+	Sig=ifelse(pvalue<0.001,"***",ifelse(pvalue<0.01,"**",ifelse(pvalue<0.05,"*","")))
+	conMean=mean(data[i,1:conNum])
+	treatMean=mean(data[i,(conNum+1):ncol(data)])
+	logFC=treatMean-conMean
+	if(pvalue<0.05){
+		sigVec=c(sigVec, paste0(i, Sig))
+		sigGeneVec=c(sigGeneVec, i)
+		if(logFC>0){diffTab=rbind(diffTab, cbind(Gene=i,conMean,treatMean,pvalue,Type="Up"))}
+		if(logFC<0){diffTab=rbind(diffTab, cbind(Gene=i,conMean,treatMean,pvalue,Type="Down"))}
+	}
+}
+
+write.table(diffTab, file="diff.txt", sep="\t", quote=F, row.names=F)
+
+data=data[sigGeneVec,]
+outTab=rbind(ID=colnames(data), data)
+write.table(outTab, file="diffGeneExp.txt", sep="\t", quote=F, col.names=F)
+row.names(data)=sigVec
+
+
+names(Type)=colnames(data)
+Type=as.data.frame(Type)
+pdf(file="heatmap.pdf", width=7, height=4.5)
+pheatmap(data,
+         annotation=Type,
+         color = colorRampPalette(c(rep("blue",3), "white", rep("red",3)))(100),
+         cluster_cols =F,
+         cluster_rows =T,
+         scale="row",
+         show_colnames=F,
+         show_rownames=T,
+         fontsize=6,
+         fontsize_row=7,
+         fontsize_col=6)
+dev.off()
+
+
+
+install.packages("corrplot")
+
+
+library(corrplot)      
+inputFile="diffGeneExp.txt"     
+setwd("C:\\biowolf\\geoFRG\\08.corrplot")      
+
+
+data=read.table(inputFile, header=T, sep="\t", check.names=F, row.names=1)
+
+
+group=gsub("(.*)\\_(.*)", "\\2", colnames(data))
+rt=data[,group=="Treat",drop=F]
+
+
+rt=t(rt)
+M=cor(rt)
+
+res1=cor.mtest(rt, conf.level = .95)
+
+
+pdf(file="corpot.pdf", width=7, height=7)
+corrplot(M,
+         type = "upper",       
+         method = "circle",    
+         col=colorRampPalette(c('blue', 'white', 'red'),alpha = TRUE)(100), tl.pos="lt",   
+         p.mat=res1$p, insig="label_sig", sig.level = c(.001, .01, .05), pch.cex = 0.85)   
+corrplot(M, type="lower", add=TRUE, method="number",col=colorRampPalette(c('blue', 'white', 'red'), alpha = TRUE)(100), tl.pos = "n", cl.pos="n", diag=FALSE, number.cex = 0.6) 
+dev.off()
+
+
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("org.Hs.eg.db")
+BiocManager::install("org.Mm.eg.db")
+BiocManager::install("org.Rn.eg.db")
+BiocManager::install("DOSE")
+BiocManager::install("clusterProfiler")
+BiocManager::install("enrichplot")
+BiocManager::install("ComplexHeatmap")
+
+
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(org.Mm.eg.db)
+library(org.Rn.eg.db)
+library(enrichplot)
+library(ggplot2)
+library(circlize)
+library(RColorBrewer)
+library(dplyr)
+library("ggpubr")
+library(ComplexHeatmap)
+
+pvalueFilter=0.05     
+qvalueFilter=0.05     
+inputFile="diff.txt"    
+
+setwd("C:\\Users\\lexb\\Desktop\\GO,KEEG\\09.GO")      
+rt=read.table(inputFile, header=T, sep="\t", check.names=F)     
+
+
+colorSel="qvalue"
+if(qvalueFilter>0.05){
+	colorSel="pvalue"
+}
+
+genes=unique(as.vector(rt[,1]))
+entrezIDs=mget(genes, org.Mm.egSYMBOL2EG, ifnotfound=NA)
+entrezIDs=as.character(entrezIDs)
+gene=entrezIDs[entrezIDs!="NA"]        #去除基因id为NA的基因
+#gene=gsub("c\\(\"(\\d+)\".*", "\\1", gene)
+
+kk=enrichGO(gene=gene, OrgDb="org.Mm.eg.db", pvalueCutoff=1, qvalueCutoff=1, ont="all", readable=T)
+GO=as.data.frame(kk)
+GO=GO[(GO$pvalue<pvalueFilter & GO$qvalue<qvalueFilter),]
+write.table(GO, file="GO.txt", sep="\t", quote=F, row.names = F)
+
+
+pdf(file="barplot.pdf", width=8.5, height=7)
+bar=barplot(kk, drop=TRUE, showCategory=10, label_format=130, split="ONTOLOGY", color=colorSel) + facet_grid(ONTOLOGY~., scale='free')
+print(bar)
+dev.off()
+		
+
+pdf(file="bubble.pdf", width=8.5, height=7)
+bub=dotplot(kk, showCategory=10, orderBy="GeneRatio", label_format=130, split="ONTOLOGY", color=colorSel) + facet_grid(ONTOLOGY~., scale='free')
+print(bub)
+dev.off()
+
+
+ontology.col=c("#5F559BFF", "#008B45FF", "#FD8CC1FF")
+data=GO[order(GO$p.adjust),]
+datasig=data[data$pvalue<0.05,,drop=F]
+BP = datasig[datasig$ONTOLOGY=="BP",,drop=F]
+CC = datasig[datasig$ONTOLOGY=="CC",,drop=F]
+MF = datasig[datasig$ONTOLOGY=="MF",,drop=F]
+BP = head(BP,6)
+CC = head(CC,6)
+MF = head(MF,6)
+data = rbind(BP,CC,MF)
+main.col = ontology.col[as.numeric(as.factor(data$ONTOLOGY))]
+
+
+BgGene = as.numeric(sapply(strsplit(data$BgRatio,"/"),'[',1))
+Gene = as.numeric(sapply(strsplit(data$GeneRatio,'/'),'[',1))
+ratio = Gene/BgGene
+logpvalue = -log(data$pvalue,10)
+logpvalue.col = brewer.pal(n = 8, name = "Reds")
+f = colorRamp2(breaks = c(0,2,4,6,8,10,15,20), colors = logpvalue.col)
+BgGene.col = f(logpvalue)
+df = data.frame(GO=data$ID,start=1,end=max(BgGene))
+rownames(df) = df$GO
+bed2 = data.frame(GO=data$ID,start=1,end=BgGene,BgGene=BgGene,BgGene.col=BgGene.col)
+bed3 = data.frame(GO=data$ID,start=1,end=Gene,BgGene=Gene)
+bed4 = data.frame(GO=data$ID,start=1,end=max(BgGene),ratio=ratio,col=main.col)
+bed4$ratio = bed4$ratio/max(bed4$ratio)*9.5
+
+
+pdf(file="GO.circlize.pdf", width=10, height=10)
+par(omi=c(0.1,0.1,0.1,1.5))
+circos.par(track.margin=c(0.01,0.01))
+circos.genomicInitialize(df,plotType="none")
+circos.trackPlotRegion(ylim = c(0, 1), panel.fun = function(x, y) {
+  sector.index = get.cell.meta.data("sector.index")
+  xlim = get.cell.meta.data("xlim")
+  ylim = get.cell.meta.data("ylim")
+  circos.text(mean(xlim), mean(ylim), sector.index, cex = 0.8, facing = "bending.inside", niceFacing = TRUE)
+}, track.height = 0.08, bg.border = NA,bg.col = main.col)
+
+for(si in get.all.sector.index()) {
+  circos.axis(h = "top", labels.cex = 0.6, sector.index = si,track.index = 1,
+              major.at=seq(0,max(BgGene),by=100),labels.facing = "clockwise")
+}
+f = colorRamp2(breaks = c(-1, 0, 1), colors = c("green", "black", "red"))
+circos.genomicTrack(bed2, ylim = c(0, 1),track.height = 0.1,bg.border="white",
+                    panel.fun = function(region, value, ...) {
+                      i = getI(...)
+                      circos.genomicRect(region, value, ytop = 0, ybottom = 1, col = value[,2], 
+                                         border = NA, ...)
+                      circos.genomicText(region, value, y = 0.4, labels = value[,1], adj=0,cex=0.8,...)
+                    })
+circos.genomicTrack(bed3, ylim = c(0, 1),track.height = 0.1,bg.border="white",
+                    panel.fun = function(region, value, ...) {
+                      i = getI(...)
+                      circos.genomicRect(region, value, ytop = 0, ybottom = 1, col = '#BA55D3', 
+                                         border = NA, ...)
+                      circos.genomicText(region, value, y = 0.4, labels = value[,1], cex=0.9,adj=0,...)
+                    })
+circos.genomicTrack(bed4, ylim = c(0, 10),track.height = 0.35,bg.border="white",bg.col="grey90",
+                    panel.fun = function(region, value, ...) {
+                      cell.xlim = get.cell.meta.data("cell.xlim")
+                      cell.ylim = get.cell.meta.data("cell.ylim")
+                      for(j in 1:9) {
+                        y = cell.ylim[1] + (cell.ylim[2]-cell.ylim[1])/10*j
+                        circos.lines(cell.xlim, c(y, y), col = "#FFFFFF", lwd = 0.3)
+                      }
+                      circos.genomicRect(region, value, ytop = 0, ybottom = value[,1], col = value[,2], 
+                                         border = NA, ...)
+                      #circos.genomicText(region, value, y = 0.3, labels = value[,1], ...)
+                    })
+circos.clear()
+
+middle.legend = Legend(
+  labels = c('Number of Genes','Number of Select','Rich Factor(0-1)'),
+  type="points",pch=c(15,15,17),legend_gp = gpar(col=c('pink','#BA55D3',ontology.col[1])),
+  title="",nrow=3,size= unit(3, "mm")
+)
+circle_size = unit(1, "snpc")
+draw(middle.legend,x=circle_size*0.42)
+
+main.legend = Legend(
+  labels = c("Biological Process","Cellular Component", "Molecular Function"),  type="points",pch=15,
+  legend_gp = gpar(col=ontology.col), title_position = "topcenter",
+  title = "ONTOLOGY", nrow = 3,size = unit(3, "mm"),grid_height = unit(5, "mm"),
+  grid_width = unit(5, "mm")
+)
+
+logp.legend = Legend(
+  labels=c('(0,2]','(2,4]','(4,6]','(6,8]','(8,10]','(10,15]','(15,20]','>=20'),
+  type="points",pch=16,legend_gp=gpar(col=logpvalue.col),title="-log10(Pvalue)",
+  title_position = "topcenter",grid_height = unit(5, "mm"),grid_width = unit(5, "mm"),
+  size = unit(3, "mm")
+)
+lgd = packLegend(main.legend,logp.legend)
+circle_size = unit(1, "snpc")
+print(circle_size)
+draw(lgd, x = circle_size*0.85, y=circle_size*0.55,just = "left")
+dev.off()
+
+
+
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(org.Mm.eg.db)
+library(org.Rn.eg.db)
+library(enrichplot)
+library(ggplot2)
+library(circlize)
+library(RColorBrewer)
+library(dplyr)
+library(ComplexHeatmap)
+
+pvalueFilter=0.05     
+qvalueFilter=0.05       
+inputFile="diff.txt"     
+
+
+colorSel="qvalue"
+if(qvalueFilter>0.05){
+	colorSel="pvalue"
+}
+	
+setwd("C:\\Users\\lexb\\Desktop\\GO,KEEG\\10.KEGG")       
+rt=read.table(inputFile, header=T, sep="\t", check.names=F)     
+
+
+genes=unique(as.vector(rt[,1]))
+entrezIDs=mget(genes, org.Mm.egSYMBOL2EG, ifnotfound=NA)
+entrezIDs=as.character(entrezIDs)
+rt=data.frame(genes, entrezID=entrezIDs)
+gene=entrezIDs[entrezIDs!="NA"]        
+#gene=gsub("c\\(\"(\\d+)\".*", "\\1", gene)
+
+
+kk <- enrichKEGG(gene=gene, organism="mmu", pvalueCutoff=1, qvalueCutoff=1)
+kk@result$Description=gsub(" - Mus musculus \\(house mouse\\)", "", kk@result$Description)
+KEGG=as.data.frame(kk)
+KEGG$geneID=as.character(sapply(KEGG$geneID,function(x)paste(rt$genes[match(strsplit(x,"/")[[1]],as.character(rt$entrezID))],collapse="/")))
+KEGG=KEGG[(KEGG$pvalue<pvalueFilter & KEGG$qvalue<qvalueFilter),]
+
+write.table(KEGG, file="KEGG.txt", sep="\t", quote=F, row.names = F)
+
+
+showNum=30    
+if(nrow(KEGG)<showNum){
+	showNum=nrow(KEGG)
+}
+
+
+pdf(file="barplot.pdf", width=8.5, height=7)
+barplot(kk, drop=TRUE, showCategory=showNum, label_format=130, color=colorSel)
+dev.off()
+
+
+pdf(file="bubble.pdf", width=8.5, height=7)
+dotplot(kk, showCategory=showNum, orderBy="GeneRatio", label_format=130, color=colorSel)
+dev.off()
+
+
+
+
+install.packages("glmnet")
+
+
+set.seed(12345)
+library(glmnet)  
+inputFile="diffGeneExp.txt"       
+setwd("C:\\biowolf\\geoFRG\\11.lasso")      
+
+
+rt=read.table(inputFile, header=T, sep="\t", check.names=F, row.names=1)
+rt=t(rt)
+
+
+x=as.matrix(rt)
+y=gsub("(.*)\\_(.*)", "\\2", row.names(rt))
+fit=glmnet(x, y, family = "binomial", alpha=1)
+cvfit=cv.glmnet(x, y, family="binomial", alpha=1,type.measure='deviance',nfolds = 10)
+
+pdf(file="lasso.pdf", width=6, height=5.5)
+plot(fit)
+dev.off()
+
+pdf(file="cvfit.pdf",width=6,height=5.5)
+plot(cvfit)
+dev.off()
+
+
+coef=coef(fit, s=cvfit$lambda.min)
+index=which(coef != 0)
+lassoGene=row.names(coef)[index]
+lassoGene=lassoGene[-1]
+write.table(lassoGene, file="LASSO.gene.txt", sep="\t", quote=F, row.names=F, col.names=F)
+
+
+
+install.packages("e1071")
+
+
+
+set.seed(12345)
+library(e1071)
+
+inputFile="diffGeneExp.txt"     
+setwd("C:\\biowolf\\geoFRG\\12.SVM")     
+source("geoFRG12.msvmRFE.R")
+
+
+data=read.table(inputFile, header=T, sep="\t", check.names=F, row.names=1)
+data=as.data.frame(t(data))
+
+group=gsub("(.*)\\_(.*)", "\\2", row.names(data))
+data=cbind(group, data)
+data$group=factor(data$group, levels=c("Control","Treat"))
+
+
+svmRFE(data, k=10, halve.above=50)
+nfold=10
+geneNum=nrow(data)
+folds=rep(1:nfold, len=geneNum)[sample(geneNum)]
+folds=lapply(1:nfold, function(x) which(folds == x))
+results=lapply(folds, svmRFE.wrap, data, k=10, halve.above=50)
+
+
+top.features=WriteFeatures(results, data, save=F)
+
+write.table(top.features, file="feature_svm.txt", sep="\t", quote=F,row.names=F)
+
+
+featsweep=lapply(1:19, FeatSweep.wrap, results, data)
+
+
+no.info=min(prop.table(table(data[,1])))
+errors=sapply(featsweep, function(x) ifelse(is.null(x), NA, x$error))
+
+
+pdf(file="errors.pdf", width=5, height=5)
+PlotErrors(errors, no.info=no.info)
+dev.off()
+
+
+pdf(file="accuracy.pdf", width=5, height=5)
+Plotaccuracy(1-errors, no.info=no.info)
+dev.off()
+
+
+featureGenes=top.features[1:which.min(errors),1,drop=F]
+write.table(file="SVM-RFE.gene.txt", featureGenes, sep="\t", quote=F, row.names=F, col.names=F)
+
+
+
+install.packages("VennDiagram")
+
+
+library(VennDiagram)      
+lassoFile="LASSO.gene.txt"      
+svmFile="SVM-RFE.gene.txt"      
+setwd("C:\\biowolf\\geoFRG\\13.venn")     
+geneList=list()
+
+
+rt=read.table(lassoFile, header=F, sep="\t", check.names=F)
+geneNames=as.vector(rt[,1])              
+geneNames=gsub("^ | $","",geneNames)     
+uniqGene=unique(geneNames)               
+geneList[["LASSO"]]=uniqGene             
+
+
+rt=read.table(svmFile, header=F, sep="\t", check.names=F)
+geneNames=as.vector(rt[,1])            
+geneNames=gsub("^ | $","",geneNames)     
+uniqGene=unique(geneNames)              
+geneList[["SVM"]]=uniqGene               
+
+
+venn.plot=venn.diagram(geneList,filename=NULL,fill=c("cornflowerblue", "darkorchid1"),scaled=FALSE,cat.pos=c(-1,1),cat.col = c("cornflowerblue", "darkorchid1"),cat.cex = 1.2)
+pdf(file="venn.pdf", width=5, height=5)
+grid.draw(venn.plot)
+dev.off()
+
+
+interGenes=Reduce(intersect,geneList)
+write.table(file="interGenes.txt", interGenes, sep="\t", quote=F, col.names=F, row.names=F)
+
+
+
+install.packages("glmnet")
+install.packages("pROC")
+
+
+
+
+library(glmnet)
+library(pROC)
+
+expFile="diffGeneExp.txt"      
+geneFile="interGenes.txt"     
+setwd("C:\\biowolf\\geoFRG\\14.ROC")    
+
+
+rt=read.table(expFile, header=T, sep="\t", check.names=F, row.names=1)
+
+
+y=gsub("(.*)\\_(.*)", "\\2", colnames(rt))
+y=ifelse(y=="Control", 0, 1)
+
+
+geneRT=read.table(geneFile, header=F, sep="\t", check.names=F)
+
+
+bioCol=rainbow(nrow(geneRT), s=0.9, v=0.9)    
+aucText=c()
+k=0
+for(x in as.vector(geneRT[,1])){
+	k=k+1
+
+	roc1=roc(y, as.numeric(rt[x,]))     
+	if(k==1){
+		pdf(file="ROC.genes.pdf", width=5, height=4.75)
+		plot(roc1, print.auc=F, col=bioCol[k], legacy.axes=T, main="")
+		aucText=c(aucText, paste0(x,", AUC=",sprintf("%.3f",roc1$auc[1])))
+	}else{
+		plot(roc1, print.auc=F, col=bioCol[k], legacy.axes=T, main="", add=TRUE)
+		aucText=c(aucText, paste0(x,", AUC=",sprintf("%.3f",roc1$auc[1])))
+	}
+}
+
+legend("bottomright", aucText, lwd=2, bty="n", col=bioCol[1:(ncol(rt)-1)])
+dev.off()
+
+
+rt=rt[as.vector(geneRT[,1]),]
+rt=as.data.frame(t(rt))
+logit=glm(y ~ ., family=binomial(link='logit'), data=rt)
+pred=predict(logit, newx=rt)     
+
+
+roc1=roc(y, as.numeric(pred))      
+ci1=ci.auc(roc1, method="bootstrap")     
+ciVec=as.numeric(ci1)
+pdf(file="ROC.model.pdf", width=5, height=4.75)
+plot(roc1, print.auc=TRUE, col="red", legacy.axes=T, main="Model")
+text(0.39, 0.43, paste0("95% CI: ",sprintf("%.03f",ciVec[1]),"-",sprintf("%.03f",ciVec[3])), col="red")
+dev.off()
+
+
+
+library(limma)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(enrichplot)
+
+expFile="normalize.txt"    
+gene="LGMN"                 
+gmtFile="c2.cp.kegg.symbols.gmt"     
+setwd("C:\\biowolf\\geoFRG\\15.GSEA")     
+
+
+rt=read.table(expFile, header=T, sep="\t", check.names=F)
+rt=as.matrix(rt)
+rownames(rt)=rt[,1]
+exp=rt[,2:ncol(rt)]
+dimnames=list(rownames(exp),colnames(exp))
+data=matrix(as.numeric(as.matrix(exp)),nrow=nrow(exp),dimnames=dimnames)
+data=avereps(data)
+data=data[rowMeans(data)>0,]
+
+
+group=gsub("(.*)\\_(.*)", "\\2", colnames(data))
+data=data[,group=="Treat",drop=F]
+
+
+dataL=data[,data[gene,]<median(data[gene,]),drop=F]     
+dataH=data[,data[gene,]>=median(data[gene,]),drop=F]   
+meanL=rowMeans(dataL)
+meanH=rowMeans(dataH)
+meanL[meanL<0.00001]=0.00001
+meanH[meanH<0.00001]=0.00001
+logFC=meanH-meanL
+
+logFC=sort(logFC, decreasing=T)
+genes=names(logFC)
+
+
+gmt=read.gmt(gmtFile)
+
+
+kk=GSEA(logFC, TERM2GENE=gmt, pvalueCutoff = 1)
+kkTab=as.data.frame(kk)
+kkTab=kkTab[kkTab$pvalue<0.05,]
+#kkTab=kkTab[kkTab$p.adjust<0.05,]
+write.table(kkTab,file="GSEA.result.txt",sep="\t",quote=F,row.names = F)
+	
+
+termNum=6     
+if(nrow(kkTab)>=termNum){
+	showTerm=row.names(kkTab)[1:termNum]
+	gseaplot=gseaplot2(kk, showTerm, base_size=8, title=gene)
+	pdf(file="GSEA.pdf", width=7.5, height=5.5)
+	print(gseaplot)
+	dev.off()
+}
+
+
+
+
+inputFile="normalize.txt"      
+setwd("C:\\biowolf\\geoFRG\\16.CIBERSORT")      
+source("geoFRG16.CIBERSORT.R")      
+
+
+outTab=CIBERSORT("ref.txt", inputFile, perm=1000)
+
+
+outTab=outTab[outTab[,"P-value"]<0.05,]
+outTab=as.matrix(outTab[,1:(ncol(outTab)-3)])
+outTab=rbind(id=colnames(outTab),outTab)
+write.table(outTab, file="CIBERSORT-Results.txt", sep="\t", quote=F, col.names=F)
+
+
+
+
+library(vioplot)      
+inputFile="CIBERSORT-Results.txt"    
+setwd("C:\\biowolf\\geoFRG\\17.vioplot")    
+
+
+rt=read.table(inputFile, header=T, sep="\t", check.names=F, row.names=1)
+
+
+con=grepl("_Control", rownames(rt), ignore.case=T)
+treat=grepl("_Treat", rownames(rt), ignore.case=T)
+conData=rt[con,]           
+treatData=rt[treat,]       
+conNum=nrow(conData)          
+treatNum=nrow(treatData)      
+rt=rbind(conData,treatData)
+
+
+outTab=data.frame()
+pdf(file="vioplot.pdf", width=13, height=8)
+par(las=1,mar=c(10,6,3,3))
+x=c(1:ncol(rt))
+y=c(1:ncol(rt))
+plot(x, y,
+     xlim=c(0,63), ylim=c(min(rt), max(rt)+0.05),
+     xlab="", ylab="Fraction", main="", 
+     pch=21,
+     col="white",
+     xaxt="n")
+
+
+for(i in 1:ncol(rt)){
+	  if(sd(rt[1:conNum,i])==0){
+	    rt[1,i]=0.00001
+	  }
+	  if(sd(rt[(conNum+1):(conNum+treatNum),i])==0){
+	    rt[(conNum+1),i]=0.00001
+	  }
+
+	  conData=rt[1:conNum,i]
+	  treatData=rt[(conNum+1):(conNum+treatNum),i]
+
+	  vioplot(conData,at=3*(i-1),lty=1,add = T,col = 'blue')
+	  vioplot(treatData,at=3*(i-1)+1,lty=1,add = T,col = 'red')
+
+	  wilcoxTest=wilcox.test(conData,treatData)
+	  p=wilcoxTest$p.value
+	  if(p<0.05){
+	      cellPvalue=cbind(Cell=colnames(rt)[i],pvalue=p)
+		  outTab=rbind(outTab,cellPvalue)
+	  }
+	  mx=max(c(conData,treatData))
+	  lines(c(x=3*(i-1)+0.2,x=3*(i-1)+0.8),c(mx,mx))
+
+	  text(x=3*(i-1)+0.5, y=mx+0.02, labels=ifelse(p<0.001, paste0("p<0.001"), paste0("p=",sprintf("%.03f",p))), cex = 0.8)
+}
+
+
+legend("topright", 
+       c("Control", "Treat"),
+       lwd=3,bty="n",cex=1,
+       col=c("blue","red"))
+
+text(seq(1,64,3),-0.04,xpd = NA,labels=colnames(rt),cex = 1,srt = 45,pos=2)
+dev.off()
+
+
+write.table(outTab,file="immuneDiff.txt",sep="\t",row.names=F,quote=F)
+
+
+
+library(limma)
+library(reshape2)
+library(tidyverse)
+library(ggplot2)
+
+expFile="normalize.txt"            
+geneFile="interGenes.txt"          
+immFile="CIBERSORT-Results.txt"     
+setwd("C:\\biowolf\\geoFRG\\18.immuneCor")     
+
+
+rt=read.table(expFile, header=T, sep="\t", check.names=F)
+rt=as.matrix(rt)
+rownames(rt)=rt[,1]
+exp=rt[,2:ncol(rt)]
+dimnames=list(rownames(exp),colnames(exp))
+data=matrix(as.numeric(as.matrix(exp)),nrow=nrow(exp),dimnames=dimnames)
+data=avereps(data)
+data=data[rowMeans(data)>0,]
+
+
+group=gsub("(.*)\\_(.*)", "\\2", colnames(data))
+data=data[,group=="Treat",drop=F]
+
+
+geneRT=read.table(geneFile, header=F, sep="\t", check.names=F)
+data=data[as.vector(geneRT[,1]),]
+data=t(data)
+
+
+immune=read.table(immFile, header=T, sep="\t", check.names=F, row.names=1)
+sameSample=intersect(row.names(data), row.names(immune))
+data=data[sameSample,,drop=F]
+immune=immune[sameSample,,drop=F]
+
+
+outTab=data.frame()
+for(cell in colnames(immune)){
+	if(sd(immune[,cell])==0){next}
+	for(gene in colnames(data)){
+		x=as.numeric(immune[,cell])
+		y=as.numeric(data[,gene])
+		corT=cor.test(x,y,method="spearman")
+		cor=corT$estimate
+		pvalue=corT$p.value
+		text=ifelse(pvalue<0.001,"***",ifelse(pvalue<0.01,"**",ifelse(pvalue<0.05,"*","")))
+		outTab=rbind(outTab,cbind(Gene=gene, Immune=cell, cor, text, pvalue))
+	}
+}
+
+
+outTab$cor=as.numeric(outTab$cor)
+pdf(file="cor.pdf", width=7, height=4.5)
+ggplot(outTab, aes(Immune, Gene)) + 
+	geom_tile(aes(fill = cor), colour = "grey", size = 1)+
+	scale_fill_gradient2(low = "#5C5DAF", mid = "white", high = "#EA2E2D") + 
+	geom_text(aes(label=text),col ="black",size = 3) +
+	theme_minimal() +    
+	theme(axis.title.x=element_blank(), axis.ticks.x=element_blank(), axis.title.y=element_blank(),
+	      axis.text.x = element_text(angle = 45, hjust = 1, size = 8, face = "bold"),  
+	      axis.text.y = element_text(size = 8, face = "bold")) +       
+	labs(fill =paste0("***  p<0.001","\n", "**  p<0.01","\n", " *  p<0.05","\n", "\n","Correlation")) +   
+	scale_x_discrete(position = "bottom")      
+dev.off()
+
+
+
+library(reshape2)
+library(ggpubr)
+library(limma)
+library(GSEABase)
+library(GSVA)
+
+gene=""      
+expFile="normalize.txt"              
+gmtFile="c2.cp.kegg.symbols.gmt"     
+setwd("C:\\biowolf\\geoFRG\\19.GSVA")     
+
+
+rt=read.table(expFile, header=T, sep="\t", check.names=F)
+rt=as.matrix(rt)
+rownames(rt)=rt[,1]
+exp=rt[,2:ncol(rt)]
+dimnames=list(rownames(exp),colnames(exp))
+data=matrix(as.numeric(as.matrix(exp)),nrow=nrow(exp),dimnames=dimnames)
+data=avereps(data)
+
+
+group=gsub("(.*)\\_(.*)", "\\2", colnames(data))
+data=data[,group=="Treat",drop=F]
+
+
+geneSets=getGmt(gmtFile, geneIdType=SymbolIdentifier())
+
+
+ssgseaScore=gsva(data, geneSets, method='ssgsea', kcdf='Gaussian', abs.ranking=TRUE)
+
+normalize=function(x){
+  return((x-min(x))/(max(x)-min(x)))}
+ssgseaScore=normalize(ssgseaScore)
+ssgseaScore=ssgseaScore[order(apply(ssgseaScore,1,sd),decreasing=T),]
+ssgseaScore=ssgseaScore[1:50,]
+
+
+lowName=colnames(data)[data[gene,]<median(data[gene,])]       
+highName=colnames(data)[data[gene,]>=median(data[gene,])]     
+lowScore=ssgseaScore[,lowName]
+highScore=ssgseaScore[,highName]
+data=cbind(lowScore, highScore)
+conNum=ncol(lowScore)
+treatNum=ncol(highScore)
+Type=c(rep("Control",conNum), rep("Treat",treatNum))
+
+
+outTab=data.frame()
+for(i in row.names(data)){
+	test=t.test(data[i,] ~ Type)
+	pvalue=test$p.value
+	t=test$statistic
+	if(test$estimate[2]>test$estimate[1]){t=abs(t)}else{t=-abs(t)}
+	Sig=ifelse(pvalue>0.05, "Not", ifelse(t>0,"Up","Down"))
+	outTab=rbind(outTab, cbind(Pathway=i, t, pvalue, Sig))
+}
+
+
+pdf(file="barplot.pdf", width=12, height=9)
+outTab$t=as.numeric(outTab$t)
+outTab$Sig=factor(outTab$Sig, levels=c("Down", "Not", "Up"))
+gg1=ggbarplot(outTab, x="Pathway", y="t", fill = "Sig", color = "white",
+		palette=c("green3","grey","red3"), sort.val = "asc", sort.by.groups = T,
+		rotate=TRUE, legend="right", title=gene,
+		xlab="Term", ylab="t value of GSVA score",  legend.title="Group", x.text.angle=60)
+print(gg1)
+dev.off()
+
+
+
+
+library(limma)
+library(ggpubr)
+
+expFile="geneMatrix.txt"      
+geneFile="interGenes.txt"     
+conFile="s1.txt"
+conFile="s2.txt"              
+setwd("C:\\biowolf\\geoFRG\\26.testDiff")     
+
+
+rt=read.table(expFile, header=T, sep="\t", check.names=F)
+rt=as.matrix(rt)
+rownames(rt)=rt[,1]
+exp=rt[,2:ncol(rt)]
+dimnames=list(rownames(exp), colnames(exp))
+data=matrix(as.numeric(as.matrix(exp)), nrow=nrow(exp), dimnames=dimnames)
+rt=avereps(data)
+
+
+qx=as.numeric(quantile(rt, c(0, 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC=( (qx[5]>100) || ( (qx[6]-qx[1])>50 && qx[2]>0) )
+if(LogC){
+	rt[rt<0]=0
+	rt=log2(rt+1)}
+data=normalizeBetweenArrays(rt)
+
+
+con=read.table(conFile, header=F, sep="\t", check.names=F)
+treat=read.table(treatFile, header=F, sep="\t", check.names=F)
+conData=data[,as.vector(con[,1])]
+treatData=data[,as.vector(treat[,1])]
+data=cbind(conData, treatData)
+conNum=ncol(conData)
+treatNum=ncol(treatData)
+
+
+geneRT=read.table(geneFile, header=F, sep="\t", check.names=F)
+data=data[as.vector(geneRT[,1]),,drop=F]
+
+
+Type=c(rep("Control",conNum), rep("Treat",treatNum))
+my_comparisons=list()
+my_comparisons[[1]]=levels(factor(Type))
+
+
+for(i in row.names(data)){
+	#data[i,][data[i,]>quantile(data[i,], 0.99)]=quantile(data[i,], 0.99)
+	rt1=data.frame(expression=data[i,], Type=Type)
+
+
+	boxplot=ggboxplot(rt1, x="Type", y="expression", color="Type",
+				      xlab="",
+				      ylab=paste(i, "expression"),
+				      legend.title="",
+				      palette = c("blue", "red"),
+				      add = "jitter")+ 
+		#stat_compare_means(comparisons = my_comparisons,symnum.args=list(cutpoints=c(0, 0.001, 0.01, 0.05, 1), symbols=c("***", "**", "*", "ns")), label="p.signif")
+		stat_compare_means(comparisons = my_comparisons)
+		
+
+	pdf(file=paste0("boxplot.",i,".pdf"), width=5, height=4.5)
+	print(boxplot)
+	dev.off()
+}
+		
+
+
